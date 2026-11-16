@@ -1,0 +1,23 @@
+# Self-hosted n8n for TriageFlow (free, runs on your laptop).
+#   cd n8n && docker compose up -d     -> open http://localhost:5678
+# Workflows and credentials live in the n8n_data volume, so they survive restarts.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+      - N8N_DIAGNOSTICS_ENABLED=false
+      # Encrypts saved credentials. Set your own long random value once and never change it,
+      # or n8n can no longer read the credentials it saved.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-change-me-to-a-long-random-string}
+      # Public URL n8n prints for webhooks. Change it if you expose n8n with a tunnel (see README).
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  n8n_data:
