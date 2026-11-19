@@ -1,0 +1,5 @@
+{
+  "functions": {
+    "api/try-ticket.js": { "maxDuration": 60 }
+  }
+}

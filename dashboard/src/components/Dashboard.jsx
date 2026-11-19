@@ -4,6 +4,7 @@ import KpiTiles from './KpiTiles'
 import { DailyChart, IntentChart } from './Charts'
 import TicketTable from './TicketTable'
 import TicketDrawer from './TicketDrawer'
+import TryItPanel from './TryItPanel'
 
 const FILTERS = [
   { key: 'needs_human', label: 'Needs human' },
@@ -103,6 +104,11 @@ export default function Dashboard({ user }) {
       )}
 
       <KpiTiles kpis={kpis} />
+
+            <TryItPanel
+        onTicketCreated={() => setFilter('all')}
+        onOpenTicket={(id) => { setFilter('all'); setSelectedId(id) }}
+      />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <DailyChart data={daily} />
