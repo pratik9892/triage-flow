@@ -53,7 +53,7 @@ export default function TryItPanel({ onTicketCreated, onOpenTicket }) {
         <div>
           <h2 className="font-semibold">Try it live</h2>
           <p className="text-sm text-[var(--text-secondary)]">
-            Send a ticket through the real n8n workflow: AI classification, order lookup, routing rules and reply drafting.
+            Send a ticket through the real n8n workflow: AI reads the message, code checks the order, scores it and picks the reply.
           </p>
         </div>
         <span className="text-sm text-[var(--text-secondary)]">{open ? 'Hide' : 'Show'}</span>
@@ -121,7 +121,7 @@ export default function TryItPanel({ onTicketCreated, onOpenTicket }) {
             </button>
             {sending && (
               <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Validating → AI classifies → order lookup → routing rules → AI drafts reply → saved. Usually 5–15 seconds.
+                Validating → AI reads the message → order lookup → score and route → template reply → saved. Usually 2–5 seconds.
               </p>
             )}
           </div>
@@ -136,9 +136,8 @@ export default function TryItPanel({ onTicketCreated, onOpenTicket }) {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={result.status} />
-                  {result.priority != null && <PriorityBadge priority={result.priority} />}
+                  {result.priority != null && <PriorityBadge priority={result.priority} score={result.priority_score} reason={result.routing_reason} />}
                   <span className="text-[var(--text-secondary)]">{INTENT_LABELS[result.intent] ?? result.intent}</span>
-                  {result.sentiment && <span className="text-[var(--text-secondary)]">· {result.sentiment}</span>}
                 </div>
                 <p><span className="font-medium">Why:</span> {result.routing_reason}</p>
                 <p><span className="font-medium">Order found:</span> {result.order_id ?? 'none (or not this customer\'s)'}</p>
