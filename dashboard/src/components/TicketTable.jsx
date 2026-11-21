@@ -1,4 +1,4 @@
-import { INTENT_LABELS, SENTIMENT_META, STATUS_META, timeAgo } from '../lib/format'
+import { INTENT_LABELS, ORDER_STATUS_LABELS, STATUS_META, deliveryInfo, inr, ordinal, replyDue, timeAgo } from '../lib/format'
 
 export function StatusBadge({ status }) {
   const m = STATUS_META[status]
@@ -10,54 +10,104 @@ export function StatusBadge({ status }) {
   )
 }
 
-export function PriorityBadge({ priority }) {
-  const urgent = priority <= 1
+// "P1 · 80". Hovering shows how the score was worked out.
+export function PriorityBadge({ priority, score, reason }) {
+  const style = priority <= 1
+    ? { background: 'var(--status-critical)', color: 'white' }
+    : priority === 2
+      ? { color: 'var(--status-warning)', boxShadow: 'inset 0 0 0 1px var(--status-warning)' }
+      : { background: 'var(--surface-0)', color: 'var(--text-secondary)' }
   return (
-    <span className={`inline-flex min-w-8 justify-center rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${urgent ? 'text-white' : 'text-[var(--text-secondary)]'}`}
-      style={{ background: urgent ? 'var(--status-critical)' : 'var(--surface-0)' }}
-      title={urgent ? 'Priority 1: most urgent' : `Priority ${priority}`}>
-      P{priority}
+    <span className="inline-flex justify-center whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+      style={style} title={reason ?? `Priority ${priority}`}>
+      P{priority}{score != null && <> · {score}</>}
     </span>
   )
 }
 
-export default function TicketTable({ tickets, onSelect, selectedId }) {
+function Tag({ tone, children }) {
+  const color = tone === 'late' || tone === 'overdue' ? 'var(--status-critical)' : 'var(--status-warning)'
+  return (
+    <span className="mt-0.5 inline-block rounded px-1.5 py-px text-xs font-medium" style={{ color, boxShadow: `inset 0 0 0 1px ${color}` }}>
+      {children}
+    </span>
+  )
+}
+
+const Sub = ({ children }) => <p className="truncate text-xs text-[var(--text-muted)]">{children}</p>
+
+// view: the selected queue filter. The human queue shows a "Reply due"
+// countdown; history views show the status and when the ticket arrived.
+export default function TicketTable({ tickets, onSelect, selectedId, view, ticketCounts = {}, now }) {
   if (!tickets.length) {
     return <p className="p-8 text-center text-sm text-[var(--text-secondary)]">No tickets here. Nice.</p>
   }
+  const queueView = view === 'needs_human' || view === 'late'
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
+      <table className="w-full min-w-[860px] table-fixed text-left text-sm">
+        <colgroup>
+          <col className="w-24" /><col className="w-40" /><col /><col className="w-48" /><col className="w-36" /><col className="w-32" />
+        </colgroup>
         <thead className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
           <tr>
             <th className="px-4 py-2 font-medium">Priority</th>
             <th className="px-4 py-2 font-medium">Customer</th>
-            <th className="px-4 py-2 font-medium">Message</th>
-            <th className="px-4 py-2 font-medium">Intent</th>
-            <th className="px-4 py-2 font-medium">Sentiment</th>
-            <th className="px-4 py-2 font-medium">Status</th>
-            <th className="px-4 py-2 font-medium">Received</th>
+            <th className="px-4 py-2 font-medium">Issue</th>
+            <th className="px-4 py-2 font-medium">Order</th>
+            <th className="px-4 py-2 font-medium">Expected delivery</th>
+            <th className="px-4 py-2 font-medium">{queueView ? 'Reply due' : 'Status'}</th>
           </tr>
         </thead>
         <tbody>
-          {tickets.map((t) => (
-            <tr key={t.id} onClick={() => onSelect(t.id)}
-              className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--surface-0)] ${selectedId === t.id ? 'bg-[var(--surface-0)]' : ''}`}>
-              <td className="px-4 py-2.5"><PriorityBadge priority={t.priority} /></td>
-              <td className="px-4 py-2.5">
-                <p className="max-w-40 truncate font-medium" title={t.customer_email}>{t.customer_name ?? t.customer_email}</p>
-                <p className="text-xs text-[var(--text-muted)]">{t.channel.replace('_', ' ')}</p>
-              </td>
-              <td className="max-w-xs truncate px-4 py-2.5 text-[var(--text-secondary)]" title={t.message}>{t.message}</td>
-              <td className="px-4 py-2.5">{INTENT_LABELS[t.intent]}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">
-                <span aria-hidden className="mr-1">{SENTIMENT_META[t.sentiment].icon}</span>
-                {SENTIMENT_META[t.sentiment].label}
-              </td>
-              <td className="px-4 py-2.5"><StatusBadge status={t.status} /></td>
-              <td className="px-4 py-2.5 whitespace-nowrap text-[var(--text-secondary)]">{timeAgo(t.received_at)}</td>
-            </tr>
-          ))}
+          {tickets.map((t) => {
+            const o = t.orders
+            const d = deliveryInfo(o)
+            const due = replyDue(t, now)
+            const count = ticketCounts[t.customer_email]
+            return (
+              <tr key={t.id} onClick={() => onSelect(t.id)}
+                className={`cursor-pointer border-t border-[var(--border)] align-top hover:bg-[var(--surface-0)] ${selectedId === t.id ? 'bg-[var(--surface-0)]' : ''}`}>
+                <td className="px-4 py-2.5">
+                  <PriorityBadge priority={t.priority} score={t.priority_score} reason={t.routing_reason} />
+                </td>
+                <td className="px-4 py-2.5">
+                  <p className="truncate font-medium" title={t.customer_email}>{t.customer_name ?? t.customer_email}</p>
+                  <Sub>{t.channel.replace('_', ' ')}{count ? ` · ${ordinal(count)} ticket` : ''}</Sub>
+                </td>
+                <td className="px-4 py-2.5" title={t.message}>
+                  <p className="truncate">{t.ai_summary || t.message}</p>
+                  <Sub>{INTENT_LABELS[t.intent]}</Sub>
+                </td>
+                <td className="px-4 py-2.5">
+                  {o ? (
+                    <>
+                      <p className="tabular-nums">{o.id}</p>
+                      <Sub>{ORDER_STATUS_LABELS[o.status]} · {o.payment_method === 'cod' ? 'COD' : 'Prepaid'} {inr(o.amount)}</Sub>
+                    </>
+                  ) : <span className="text-[var(--text-muted)]">–</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  {d ? (
+                    <>
+                      <p className="whitespace-nowrap">{d.main}</p>
+                      {d.tag ? <Tag tone={d.tone}>{d.tag}</Tag> : d.sub && <Sub>{d.sub}</Sub>}
+                    </>
+                  ) : <span className="text-[var(--text-muted)]">–</span>}
+                </td>
+                <td className="px-4 py-2.5 whitespace-nowrap">
+                  {queueView
+                    ? due && (due.tone ? <Tag tone={due.tone}>{due.label}</Tag> : <span className="text-[var(--text-secondary)]">{due.label}</span>)
+                    : (
+                      <>
+                        <StatusBadge status={t.status} />
+                        <Sub>{timeAgo(t.received_at)}</Sub>
+                      </>
+                    )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
