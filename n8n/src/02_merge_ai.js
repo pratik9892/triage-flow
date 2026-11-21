@@ -1,8 +1,11 @@
 // Node: "Merge AI result"  (Code node, run once for all items)
 // Parses and validates the classifier's JSON, then combines it with the
-// validated ticket. If the LLM call failed (rate limit, timeout, invalid
-// JSON), the ticket still goes through, marked ai_failed, and the routing
-// step sends it to a person.
+// validated ticket. The AI returns only 4 fields: intent, confidence,
+// order_id and summary. Tone and urgency are not used anywhere.
+//
+// If the LLM call failed (rate limit, timeout, invalid JSON), the ticket
+// still goes through, marked ai_failed, and the routing step sends it to a
+// person. No guessing.
 //
 // Why parse here instead of n8n's Structured Output Parser node? That node
 // requires the model to wrap its answer in an extra {"output": ...} key, and
@@ -11,17 +14,13 @@
 
 const INTENTS = ['wismo', 'cancel_request', 'return_exchange', 'refund_status',
   'damaged_or_wrong_item', 'payment_issue', 'product_query', 'complaint', 'other'];
-const SENTIMENTS = ['positive', 'neutral', 'negative', 'angry'];
-const URGENCIES = ['low', 'medium', 'high'];
 const ORDER_ID_RE = /\bORD[-\s]?(\d{4,})\b/i;
 
-const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const normaliseOrderId = (text) => {
   const m = String(text ?? '').match(ORDER_ID_RE);
   return m ? `ORD-${m[1]}` : null;
 };
 
-// One webhook call = one ticket = one item, so .first() is safe here.
 function parseModelJson(text) {
   if (typeof text !== 'string') return null;
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -35,6 +34,7 @@ function parseModelJson(text) {
   }
 }
 
+// One webhook call = one ticket = one item, so .first() is safe here.
 const item = $input.first();
 const base = $('Validate & normalise').first().json;
 {
@@ -57,13 +57,15 @@ const base = $('Validate & normalise').first().json;
       ...base,
       ai: {
         failed: aiFailed,
-        error: aiFailed ? String(item.json.error ?? 'Model did not return valid JSON').slice(0, 300) : null,
-        intent: aiFailed ? 'other' : oneOf(ai.intent, INTENTS, 'other'),
-        sentiment: aiFailed ? 'neutral' : oneOf(ai.sentiment, SENTIMENTS, 'neutral'),
-        urgency: aiFailed ? 'medium' : oneOf(ai.urgency, URGENCIES, 'medium'),
-        confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0,
+        error: aiFailed ? String(raw.error ?? 'Model did not return valid JSON').slice(0, 300) : null,
+        intent: aiFailed ? 'other' : ai.intent,
+        confidence: aiFailed ? 0 : (Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0),
         summary: aiFailed ? null : String(ai.summary ?? '').slice(0, 300),
         order_id: orderId,
+        // Not used for routing or shown in the UI. Fixed values only because
+        // the tickets table still has these columns.
+        sentiment: 'neutral',
+        urgency: 'medium',
       },
     },
   }];
