@@ -77,34 +77,22 @@ MESSAGE:
 {{ $json.ticket.message }}
 \"\"\""""
 
-REPLY_TEXT = """=MODE: {{ $json.decision.reply_mode }}
-BRAND: {{ $json.order?.brand ?? 'our store' }}
-CUSTOMER FIRST NAME: {{ ($json.ticket.customer_name ?? $json.order?.customer_name ?? '').split(' ')[0] || 'unknown' }}
-TODAY (India): {{ $now.setZone('Asia/Kolkata').toFormat('d LLL yyyy') }}
-TICKET: intent={{ $json.ai.intent }}, sentiment={{ $json.ai.sentiment }}
-ORDER FACTS: {{ $json.order ? JSON.stringify({ order_id: $json.order.order_id, status: $json.order.status, items: $json.order.items.map(i => i.name), courier: $json.order.courier, tracking_number: $json.order.awb, expected_delivery: $json.order.expected_on, delivered_at: $json.order.delivered_at, payment: $json.order.payment_method }) : 'No order found for this customer' }}
-
-CUSTOMER MESSAGE:
-\"\"\"
-{{ $json.ticket.message }}
-\"\"\"
-
-Write the reply now."""
-
 INSERT_SQL = """insert into tickets (
   external_id, channel, customer_email, customer_name, subject, message, received_at,
   intent, sentiment, urgency, confidence, extracted_order_id, ai_summary,
-  order_id, status, priority, routing_reason, draft_reply, processing_ms, model, ai_failed)
+  order_id, status, priority, routing_reason, draft_reply, processing_ms, model, ai_failed,
+  priority_score)
 values ($1, $2::ticket_channel, $3, $4, $5, $6, $7::timestamptz,
   $8::ticket_intent, $9::ticket_sentiment, $10::ticket_urgency, $11::numeric, $12, $13,
-  $14, $15::ticket_status, $16::smallint, $17, $18, $19::int, $20, $21::boolean)
+  $14, $15::ticket_status, $16::smallint, $17, $18, $19::int, $20, $21::boolean,
+  $22::smallint)
 on conflict (external_id) do nothing
 returning id, status;"""
 
 INSERT_PARAMS = ("={{ (r => [r.external_id, r.channel, r.customer_email, r.customer_name, r.subject, r.message, "
                  "r.received_at, r.intent, r.sentiment, r.urgency, r.confidence, r.extracted_order_id, r.ai_summary, "
                  "r.order_id, r.status, r.priority, r.routing_reason, r.draft_reply, r.processing_ms, r.model, "
-                 "r.ai_failed])($json.row) }}")
+                 "r.ai_failed, r.priority_score])($json.row) }}")
 
 FINAL_BODY = """={{ (() => {
   const r = $('Build ticket row').first().json.row;
@@ -117,6 +105,7 @@ FINAL_BODY = """={{ (() => {
     intent: r.intent,
     sentiment: r.sentiment,
     priority: r.priority,
+    priority_score: r.priority_score,
     routing_reason: r.routing_reason,
     order_id: r.order_id,
     reply: r.status === 'auto_resolved' ? r.draft_reply : null,
@@ -146,14 +135,12 @@ nodes = [
     model("Model: classifier", [1040, 520], 0, True),
     code("Merge AI result", [1460, 300], "02_merge_ai.js"),
     pg("Lookup order", [1680, 300],
-       "select l.*, l.expected_delivery::text as expected_on from lookup_order($1, $2) l;",
+       "select l.*, l.expected_delivery::text as expected_on, l.refund_expected_date::text as refund_due_on from lookup_order($1, $2) l;",
        "={{ [$json.ai.order_id, $json.ticket.customer_email] }}", alwaysOutputData=True),
     code("Routing rules", [1900, 300], "03_routing.js"),
-    chain("AI: draft reply", [2120, 300], REPLY_TEXT, read("prompt_reply_system.txt"), False),
-    model("Model: reply writer", [2120, 520], 0.3, False),
-    code("Build ticket row", [2400, 300], "04_build_row.js"),
-    pg("Save ticket", [2620, 300], INSERT_SQL, INSERT_PARAMS, alwaysOutputData=True),
-    respond("Respond 200: triaged", [2840, 300], FINAL_BODY),
+    code("Build ticket row", [2120, 300], "04_build_row.js"),
+    pg("Save ticket", [2340, 300], INSERT_SQL, INSERT_PARAMS, alwaysOutputData=True),
+    respond("Respond 200: triaged", [2560, 300], FINAL_BODY),
 ]
 
 def main(src, dst, kind="main", idx=0, src_idx=0):
@@ -172,9 +159,7 @@ links = [
     main("AI: classify ticket", "Merge AI result"),
     main("Merge AI result", "Lookup order"),
     main("Lookup order", "Routing rules"),
-    main("Routing rules", "AI: draft reply"),
-    main("Model: reply writer", "AI: draft reply", kind="ai_languageModel"),
-    main("AI: draft reply", "Build ticket row"),
+    main("Routing rules", "Build ticket row"),
     main("Build ticket row", "Save ticket"),
     main("Save ticket", "Respond 200: triaged"),
 ]
@@ -189,10 +174,10 @@ for src, target, src_idx in links:
 sticky = node("Note", "n8n-nodes-base.stickyNote", 1, [-40, -140], {
     "content": "## TriageFlow: AI support-ticket triage\n"
                "1. Validate input and skip duplicates (idempotency)\n"
-               "2. LLM classifies intent, sentiment, urgency and extracts the order ID\n"
+               "2. LLM reads the message: intent, order ID, confidence, summary (the only AI step)\n"
                "3. Look up the order in Supabase (only if it belongs to the sender's email)\n"
-               "4. **Plain code decides** what is safe to auto-answer\n"
-               "5. LLM drafts the reply from order facts only\n"
+               "4. **Plain code decides**: score = intent base +/- order facts; below 25 = auto\n"
+               "5. Template reply filled from order data (no AI)\n"
                "6. Save to Supabase -> dashboard updates in real time",
     "height": 220, "width": 520, "color": 4})
 
