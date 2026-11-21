@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { INTENT_LABELS, ORDER_STATUS_LABELS, SENTIMENT_META, inr } from '../lib/format'
+import { INTENT_LABELS, ORDER_STATUS_LABELS, deliveryInfo, inr, shortDay } from '../lib/format'
 import { PriorityBadge, StatusBadge } from './TicketTable'
 
 function Row({ label, children }) {
   return (
     <div className="flex justify-between gap-4 py-1 text-sm">
-      <span className="text-[var(--text-secondary)]">{label}</span>
+      <span className="shrink-0 text-[var(--text-secondary)]">{label}</span>
       <span className="text-right font-medium">{children ?? '–'}</span>
     </div>
   )
@@ -17,6 +17,7 @@ export default function TicketDrawer({ ticket, onClose, onChanged }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const order = ticket.orders
+  const delivery = deliveryInfo(order)
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -53,7 +54,7 @@ export default function TicketDrawer({ ticket, onClose, onChanged }) {
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <PriorityBadge priority={ticket.priority} />
+          <PriorityBadge priority={ticket.priority} score={ticket.priority_score} reason={ticket.routing_reason} />
           <StatusBadge status={ticket.status} />
         </div>
 
@@ -62,14 +63,12 @@ export default function TicketDrawer({ ticket, onClose, onChanged }) {
           {ticket.message}
         </blockquote>
 
-        <h3 className="mt-6 text-sm font-semibold">AI triage</h3>
+        <h3 className="mt-6 text-sm font-semibold">Triage</h3>
         <div className="mt-1 divide-y divide-[var(--border)]">
-          <Row label="Intent">{INTENT_LABELS[ticket.intent]}</Row>
-          <Row label="Sentiment">{SENTIMENT_META[ticket.sentiment].icon} {SENTIMENT_META[ticket.sentiment].label}</Row>
-          <Row label="Urgency">{ticket.urgency}</Row>
-          <Row label="Confidence">{ticket.confidence != null ? `${Math.round(ticket.confidence * 100)}%` : null}</Row>
-          <Row label="Routing">{ticket.routing_reason}</Row>
-          {ticket.ai_failed && <Row label="Note"><span className="text-[var(--status-critical)]">AI step failed: routed to a person</span></Row>}
+          <Row label="Intent (AI)">{INTENT_LABELS[ticket.intent]}</Row>
+          <Row label="AI confidence">{ticket.confidence != null ? `${Math.round(ticket.confidence * 100)}%` : null}</Row>
+          <Row label="Why this priority">{ticket.routing_reason}</Row>
+          {ticket.ai_failed && <Row label="Note"><span className="text-[var(--status-critical)]">AI unavailable: read the message and decide</span></Row>}
         </div>
         {ticket.ai_summary && <p className="mt-2 text-sm text-[var(--text-secondary)]">{ticket.ai_summary}</p>}
 
@@ -80,7 +79,16 @@ export default function TicketDrawer({ ticket, onClose, onChanged }) {
             <Row label="Status">{ORDER_STATUS_LABELS[order.status]}</Row>
             <Row label="Amount">{inr(order.amount)} · {order.payment_method === 'cod' ? 'Cash on delivery' : 'Prepaid'}</Row>
             <Row label="Courier">{order.courier ? `${order.courier} · AWB ${order.awb}` : null}</Row>
-            <Row label="Expected delivery">{order.expected_delivery}</Row>
+            <Row label="Expected delivery">
+              {delivery?.main}
+              {delivery?.tag && <span style={{ color: delivery.tone === 'late' ? 'var(--status-critical)' : 'var(--status-warning)' }}> · {delivery.tag}</span>}
+            </Row>
+            {order.refund_status && order.refund_status !== 'none' && (
+              <Row label="Refund">
+                {order.refund_amount != null ? `${inr(order.refund_amount)} · ` : ''}started
+                {order.refund_expected_date ? `, due ${shortDay(order.refund_expected_date)}` : ''}
+              </Row>
+            )}
             <Row label="Items">{order.items.map((i) => i.name).join(', ')}</Row>
           </div>
         ) : (
@@ -88,11 +96,12 @@ export default function TicketDrawer({ ticket, onClose, onChanged }) {
         )}
 
         <h3 className="mt-6 text-sm font-semibold">
-          {ticket.status === 'auto_resolved' ? 'Reply sent' : 'Suggested reply'}
+          {ticket.status === 'needs_human' ? 'Your reply' : 'Reply sent'}
         </h3>
         {ticket.status === 'needs_human' ? (
           <>
             <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={7}
+              placeholder="Write your reply to the customer…"
               className="mt-2 w-full rounded-lg border border-[var(--border)] bg-white p-3 text-sm" />
             {error && <p role="alert" className="mt-2 text-sm text-[var(--status-critical)]">{error}</p>}
             <button onClick={resolve} disabled={saving}
